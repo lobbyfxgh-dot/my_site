@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Math Rush</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body{font-family:Segoe UI,sans-serif;background:linear-gradient(135deg,#667eea,#764ba2);margin:0;padding:0}
+.card{max-width:420px;margin:40px auto;background:#fff;padding:24px;border-radius:16px;box-shadow:0 15px 30px rgba(0,0,0,.25)}
+h1{text-align:center}input,button{width:100%;padding:12px;font-size:18px;border-radius:8px;margin:6px 0}
+button{background:#667eea;color:white;border:none}button:hover{background:#5a67d8}
+#feedback{text-align:center;margin-top:8px}#timer{text-align:center;font-weight:bold;margin-bottom:10px}
+.leaderboard{margin-top:20px}
+</style>
+</head>
+<body>
+
+<!-- ===== AUTH BOX ===== -->
+<div class="card" id="auth-box">
+  <h2>Login / Signup</h2>
+  <input id="username" placeholder="Username">
+  <input id="password" type="password" placeholder="Password">
+  <button id="signup-btn">Sign Up</button>
+  <button id="login-btn">Login</button>
+  <p id="auth-feedback" style="color:red;"></p>
+</div>
+
+<!-- ===== GAME BOX ===== -->
+<div class="card" id="game-box" style="display:none">
+<h1>🧮 Math Rush</h1>
+<div id="timer">⏱ 60s</div>
+<div id="question">Press Start</div>
+<input id="answer" type="number" placeholder="Answer">
+<button id="submit-btn">Submit</button>
+<p id="feedback"></p>
+<p id="points">Points: 0</p>
+<button id="start-btn">▶ Start Timed Mode</button>
+
+<div class="leaderboard">
+<h3>🏆 Leaderboard</h3>
+<ul id="leaders"></ul>
+</div>
+
+<div style="margin-top:15px;text-align:center;color:#888">
+<!-- Simulated Ad for Approval -->
+"Watch this ad to continue" 🟦
+</div>
+</div>
+
+<script>
+const BASE_URL = "https://lobby-faej.onrender.com"; // <-- Replace with your Render backend URL
+
+let user = null;
+let qid = null;
+let timeLeft = 60;
+let timer = null;
+let gameRunning = false;
+let lastCheckpoint = 0;
+
+// ===== AUTH FUNCTIONS =====
+function signup() {
+    const u = document.getElementById("username").value.trim();
+    const p = document.getElementById("password").value;
+    if(!u || !p) return;
+    fetch(`${BASE_URL}/signup`,{
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({username:u,password:p})
+    }).then(r=>r.json()).then(d=>{
+        const feedback = document.getElementById("auth-feedback");
+        feedback.style.color = d.success?"green":"red";
+        feedback.innerText = d.success?"Signup success! Login now.":d.error;
+    });
+}
+
+function login() {
+    const u = document.getElementById("username").value.trim();
+    const p = document.getElementById("password").value;
+    if(!u || !p) return;
+    fetch(`${BASE_URL}/login`,{
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({username:u,password:p})
+    }).then(r=>r.json()).then(d=>{
+        const feedback = document.getElementById("auth-feedback");
+        if(d.success){
+            user = u;
+            feedback.style.color="green";
+            feedback.innerText="Login success!";
+            document.getElementById("auth-box").style.display="none";
+            document.getElementById("game-box").style.display="block";
+            loadLeaderboard();
+        } else {
+            feedback.style.color="red";
+            feedback.innerText=d.error;
+        }
+    });
+}
+
+// ===== GAME FUNCTIONS =====
+function startGame() {
+    if(!user){document.getElementById("auth-feedback").innerText="Login first!"; return;}
+    if(timer) clearInterval(timer);
+    gameRunning = true;
+    timeLeft = 60;
+    qid = null;
+    lastCheckpoint = 0;
+    document.getElementById("timer").innerText = "⏱ 60s";
+    document.getElementById("points").innerText = "Points: 0";
+    document.getElementById("feedback").innerText = "";
+    document.getElementById("question").innerText = "Loading...";
+    loadQuestion().then(()=>{
+        timer = setInterval(()=>{
+            if(!gameRunning) return;
+            timeLeft--;
+            document.getElementById("timer").innerText = "⏱ " + timeLeft + "s";
+            if(timeLeft <= 0) endGame();
+        },1000);
+    });
+}
+
+function endGame() {
+    gameRunning = false;
+    if(timer){clearInterval(timer); timer=null;}
+    document.getElementById("timer").innerText = "⏹ Time Up!";
+    document.getElementById("question").innerText = "Game Over";
+}
+
+// ===== QUESTION / ANSWER =====
+function loadQuestion() {
+    return fetch(`${BASE_URL}/question`).then(r=>r.json()).then(d=>{
+        qid = d.qid;
+        document.getElementById("question").innerText = d.question;
+        document.getElementById("answer").value = "";
+    }).catch(()=>{
+        document.getElementById("question").innerText = "❌ Failed to load";
+    });
+}
+
+function submitAnswer() {
+    if(!gameRunning || !qid || timeLeft<=0) return;
+    const val = parseInt(document.getElementById("answer").value);
+    if(isNaN(val)) return;
+
+    fetch(`${BASE_URL}/answer`,{
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({user:user,qid:qid,answer:val})
+    }).then(r=>r.json()).then(d=>{
+        document.getElementById("feedback").innerText = d.correct?"✅ Correct":"❌ Wrong";
+        document.getElementById("points").innerText = "Points: " + d.points;
+        loadLeaderboard();
+
+        // -------- CHECKPOINT AD EVERY 20 POINTS --------
+        if(d.points > 0 && d.points % 20 === 0) {
+            // Only trigger if the game is running
+            if(gameRunning) {
+                gameRunning = false;
+                document.getElementById("feedback").innerText = `⚠ Points reached ${d.points}. "Watch this ad to continue"`;
+                watchAd(true); // checkpoint ad
+                return; // stop loading new question until ad finished
+            }
+        }
+
+        loadQuestion();
+    });
+}
+
+
+// ===== LEADERBOARD =====
+function loadLeaderboard() {
+    fetch(`${BASE_URL}/leaderboard`).then(r=>r.json()).then(data=>{
+        const ul = document.getElementById("leaders");
+        ul.innerHTML="";
+        data.forEach(u=>{
+            const li = document.createElement("li");
+            li.innerText = u.user + ": " + u.points;
+            ul.appendChild(li);
+        });
+    });
+}
+
+// ===== SIMULATED AD =====
+function watchAd(isCheckpoint=false) {
+    if(!user) return;
+    document.getElementById("feedback").innerText = "Watching ad...";
+    
+    setTimeout(()=>{
+        // Just simulate ad; no points added
+        if(isCheckpoint){
+            document.getElementById("feedback").innerText = "🎉 Ad watched! You may continue.";
+            gameRunning = true;
+            loadQuestion(); // continue the game
+        }
+    }, 3000); // simulate 3-second ad
+}
+
+
+// ===== ATTACH EVENTS =====
+document.addEventListener("DOMContentLoaded", ()=>{
+    document.getElementById("signup-btn").addEventListener("click", signup);
+    document.getElementById("login-btn").addEventListener("click", login);
+    document.getElementById("start-btn").addEventListener("click", startGame);
+    document.getElementById("submit-btn").addEventListener("click", submitAnswer);
+});
+</script>
+
+</body>
+</html>
